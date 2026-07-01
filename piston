@@ -1,0 +1,8 @@
+
+```bash
+docker run --privileged -v $PWD:'/piston' -dit -p 2000:2000 --name piston_api ghcr.io/engineer-man/piston
+```
+
+```powershell
+docker run --privileged -v "${pwd}:/piston" -dit -p 2000:2000 --name piston_api ghcr.io/engineer-man/piston
+```
