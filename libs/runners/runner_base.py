@@ -1,6 +1,14 @@
+from pydantic import BaseModel
 from typing import Any, Iterable, Protocol, TypeVar
 
 type_T = TypeVar("type_T", covariant=True)
+
+
+class RunnerMetadata(BaseModel):
+    language: str
+    runtime: str  # language runtime (eg. python3.10, nodejsxx, etc.)
+    backend: str
+    timeout: float  # timeout in seconds
 
 
 class Runner(Protocol[type_T]):
@@ -13,5 +21,8 @@ class Runner(Protocol[type_T]):
     async def aclose(self) -> None:
         ...
 
-    async def run(self, lang: str, code: str, modules: Iterable[str]) -> type_T:
+    async def run(self, code: str, modules: Iterable[str]) -> type_T:
+        ...
+    
+    def get_manifest_metadata(self) -> RunnerMetadata:
         ...

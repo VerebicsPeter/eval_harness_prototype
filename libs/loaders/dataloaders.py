@@ -1,51 +1,39 @@
 from __future__ import annotations
-
-from typing import Any, Iterable, Protocol, TypeVar
-
 from datasets import load_dataset
+from typing import Protocol, TypeVar, Generator, Generic
+from pydantic import BaseModel
+
+type_T = TypeVar("type_T", covariant=True)
 
 
-class SupportsLoad(Protocol):
-    def load(self) -> Iterable[str] | str:
+class LoaderMetadata(BaseModel):
+    dataset: str
+    dataset_url: str
+
+
+class Loader(Protocol[type_T]):
+    def load(self) -> Generator[type_T, None, None]:
+        ...
+
+    def get_manifest_metadata(self) -> LoaderMetadata:
         ...
 
 
-T = TypeVar("T", bound=SupportsLoad)
-
-
-class AssertTestLoader:
-    def __init__(self, loader: T, assert_statements: str) -> None:
-        self._loader = loader
-        self._assert_statements = assert_statements
-
-    def load(self) -> list[str]:
-        raw_items = self._loader.load()
-        if isinstance(raw_items, str):
-            items = [raw_items]
-        else:
-            items = [str(item) for item in raw_items]
-
-        if not self._assert_statements.strip():
-            return items
-
-        appended = []
-        for item in items:
-            if item.strip():
-                appended.append(f"{item}\n\n{self._assert_statements}")
-            else:
-                appended.append(self._assert_statements)
-        return appended
-
-
-class HuggingFaceDatasetLoader:
-    def __init__(self, dataset_name: str, split: str = "test", limit: int | None = None) -> None:
+class HuggingFaceDatasetLoader(Loader[dict]):
+    def __init__(self, dataset_name: str, split: str, limit: int | None = None) -> None:
         self.dataset_name = dataset_name
         self.split = split
         self.limit = limit
 
-    def load(self) -> list[dict[str, Any]]:
+    def load(self):
         dataset = load_dataset(self.dataset_name, split=self.split)
-        records = list(dataset)
         if self.limit is not None:
-            records = records[: self.limit]
-        return [dict(record) for record in records]
+            yield from map(dict, dataset.select(range(self.limit)))
+        else:
+            yield from map(dict, dataset)
+    
+    def get_manifest_metadata(self) -> LoaderMetadata:
+        return LoaderMetadata(
+            dataset=self.dataset_name,
+            dataset_url=self.dataset_name  # TODO: resolve the HF url
+        )

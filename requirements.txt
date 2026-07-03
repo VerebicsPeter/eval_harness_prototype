@@ -3,3 +3,4 @@ openai
 google-genai
 datasets
 dotenv
+pydantic
