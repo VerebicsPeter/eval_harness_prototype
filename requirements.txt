@@ -4,3 +4,5 @@ google-genai
 datasets
 dotenv
 pydantic
+inspect-ai
+microsandbox
