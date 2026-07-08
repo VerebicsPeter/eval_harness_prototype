@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "microsandbox_service"
+version = "0.0.1"
+description = "A light FastAPI wrapper exposing microsandbox microVM lifecycle over HTTP"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "pydantic-settings",
+    "microsandbox==0.6.4",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "httpx",
+]
+
+[project.scripts]
+microsandbox-service = "microsandbox_service.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
