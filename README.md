@@ -1,24 +1,36 @@
-# Inspect AI microsandbox integration
+# Inspect-AI microsandbox integration
 
-This repository provides an example for integrating microsandbox microvm runtimes for inspect AI with a simple wrapper.
+This repository provides an example for integrating microsandbox microvm runtimes in Inspect-AI with a simple wrapper.
 
 ## Setup
 
-Install the requirements in `requirements.txt` (using `uv` is recommended).
+Install the packages in `requirements.txt`:
+
+```bash
+uv pip install -r requirements.txt
+```
+
+Install the custom `inspect_extensions`:
+
+```bash
+uv pip install inspect_extensions
+```
+
+> NOTE: Using `uv` is optional but recommended
 
 ## Tests
 
-Run the smoke test scripts to verify microsandbox is working:
+Run the smoke test script to verify microsandbox is working:
 
 ```bash
 python -m tests.test_microsandbox
 ```
 
-> NOTE: Running the tests the first time may take longer because of microsandbox initialization.
+> NOTE: Running the tests the first time may take longer because of microsandbox initialization. Also the script will download the `python` image the first time.
 
 ## Running the custom humaneval instance
 
-> NOTE: humaneval benchmark is only reimplemented to provide an example for the use of inspect-AI, reimplementing a benchmark is  not required for the use of the microsandbox wrapper.
+> NOTE: humaneval benchmark is only reimplemented to provide an example for the use of Inspect-AI, reimplementing a benchmark is  not required for the use of the microsandbox wrapper.
 
 Run the example via:
 

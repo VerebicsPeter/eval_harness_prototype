@@ -24,7 +24,11 @@ class MicrosandboxSandboxEnvironment(SandboxEnvironment):
 
     @classmethod
     def config_files(cls) -> list[str]:
-        return ["microsandbox.yaml"]
+        # We only support configuration via MicrosandboxConfig (passed through a
+        # SandboxEnvironmentSpec), not a default config file on disk. Returning
+        # an empty list keeps this consistent with _resolve_config(), which
+        # rejects file-path configs.
+        return []
 
     @classmethod
     def is_docker_compatible(cls) -> bool:
@@ -119,8 +123,19 @@ class MicrosandboxSandboxEnvironment(SandboxEnvironment):
         user: str | None = None,
         timeout: int | None = None,
         timeout_retry: bool = True,
-        concurrency: bool = True,
     ) -> ExecResult[str]:
+        # microsandbox's collected exec() has no stdin channel; piping input
+        # requires the streaming exec_stream() + Stdin.pipe() API. Rather than
+        # silently discarding stdin (which produces wrong results), fail loudly
+        # until that path is implemented.
+        if input is not None:
+            raise NotImplementedError(
+                "MicrosandboxSandboxEnvironment.exec() does not support the "
+                "`input` (stdin) argument yet; implement it via "
+                "microsandbox's exec_stream() + Stdin.pipe()."
+            )
+        # `user` and `timeout_retry` are part of the Inspect contract but have no
+        # microsandbox equivalent, so they are intentionally ignored here.
         result = await self._sandbox.exec(
             cmd[0],
             cmd[1:],
@@ -137,11 +152,8 @@ class MicrosandboxSandboxEnvironment(SandboxEnvironment):
 
     async def write_file(self, file: str, contents: str | bytes) -> None:
         if isinstance(contents, str):
-            try:
-                contents = contents.encode(encoding="utf-8")
-                await self._sandbox.fs.write(file, contents)
-            except UnicodeEncodeError as e:
-                raise UnicodeEncodeError(*e.args) from e
+            contents = contents.encode(encoding="utf-8")
+        await self._sandbox.fs.write(file, contents)
 
     @overload
     async def read_file(self, file: str, text: Literal[True] = True) -> str: ...

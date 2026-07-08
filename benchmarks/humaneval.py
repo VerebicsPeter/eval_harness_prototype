@@ -21,15 +21,6 @@ from inspect_ai.scorer import Score, Scorer, Target, accuracy, scorer, stderr
 from inspect_ai.solver import TaskState, generate
 from inspect_ai.util import ExecResult, sandbox
 
-import sys
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "libs" / "sandboxes"))
-
-# TODO: add setuptools buildstep and use libs.sandboxes.sb_microsandbox instead...
-# Importing this registers "microsandbox" with Inspect's sandbox registry
-# as a side effect of the @sandboxenv decorator -- no entry point needed.
-import sb_microsandbox  # noqa: E402, F401
-
 HUMANEVAL_URL = (
     "https://raw.githubusercontent.com/openai/human-eval/master/data/HumanEval.jsonl.gz"
 )

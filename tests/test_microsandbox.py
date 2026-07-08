@@ -9,7 +9,7 @@ import asyncio
 
 from microsandbox import Sandbox
 
-from libs.sandboxes.sb_microsandbox import MicrosandboxConfig, MicrosandboxSandboxEnvironment
+from inspect_extensions.sandboxes.sb_microsandbox import MicrosandboxConfig, MicrosandboxSandboxEnvironment
 
 
 async def main() -> None:
