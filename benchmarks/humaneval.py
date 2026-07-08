@@ -1,78 +1,121 @@
-import asyncio
-from contextlib import nullcontext
-from typing import Any, Iterable
-from pydantic import BaseModel
+"""A from-scratch HumanEval implementation that scores inside microsandbox
+microVMs via our custom MicrosandboxSandboxEnvironment.
 
-from libs.loaders import Loader
-from libs.clients import LLMClient
-from libs.runners import Runner
-from libs.utils import validate_stream
+Usage:
+    inspect eval humaneval_microvm.py --limit 5 --model <provider/model>
+    inspect view
+"""
+
+from __future__ import annotations
+
+import gzip
+import json
+import re
+import urllib.request
+from typing import Any
+from pathlib import Path
+
+from inspect_ai import Task, task
+from inspect_ai.dataset import MemoryDataset, Sample
+from inspect_ai.scorer import Score, Scorer, Target, accuracy, scorer, stderr
+from inspect_ai.solver import TaskState, generate
+from inspect_ai.util import ExecResult, sandbox
+
+HUMANEVAL_URL = (
+    "https://raw.githubusercontent.com/openai/human-eval/master/data/HumanEval.jsonl.gz"
+)
+
+INSTRUCTION = (
+    "Read the following function signature and docstring, and fully "
+    "implement the function described. Respond with ONLY the complete "
+    "function (signature + body) inside a single ```python code block -- "
+    "no explanation, no extra text.\n\n"
+)
 
 
-class HumanEvalData(BaseModel):
-    task_id: str
-    prompt: str
-    canonical_solution: str
-    test: str
-    entry_point: str
+# ----------------------------------------------------------------------
+# dataset
+# ----------------------------------------------------------------------
 
 
-def he_load_tasks(loader: Loader[dict]):
-    # NOTE: we could check if all pass in validate stream but that is 2N...
-    yield from validate_stream(loader.load(), HumanEvalData)
+def _load_humaneval_records() -> list[dict[str, Any]]:
+    with urllib.request.urlopen(HUMANEVAL_URL) as resp:  # noqa: S310
+        raw = gzip.decompress(resp.read())
+    return [json.loads(line) for line in raw.decode("utf-8").splitlines() if line]
 
 
-async def he_solve_task(item: HumanEvalData,
-                        client: LLMClient,
-                        runner: Runner[dict],
-                        sem: asyncio.Semaphore | None = None) -> dict:
-    ctx = sem if sem is not None else nullcontext()
-    async with ctx:
-        sysmsg=(
-            "#You are solving a Python coding task from the HumanEval benchmark. "
-            "Return only the RAW implementation for the requested function: "
-            "raw source code inside function scope, "
-            "after the signature, NO MD formatting, "
-            "RAW correctly indented, working python code\n\n"
+def record_to_sample(record: dict[str, Any]) -> Sample:
+    return Sample(
+        id=record["task_id"],
+        input=INSTRUCTION + record["prompt"],
+        target=record["canonical_solution"],
+        metadata={
+            "task_id": record["task_id"],
+            "prompt": record["prompt"],
+            "entry_point": record["entry_point"],
+            "test": record["test"],
+        },
+    )
+
+
+def humaneval_dataset(limit: int | None = None) -> MemoryDataset:
+    records = _load_humaneval_records()
+    if limit is not None:
+        records = records[:limit]
+    return MemoryDataset(samples=[record_to_sample(r) for r in records], name="humaneval")
+
+
+# ----------------------------------------------------------------------
+# scorer: run the model's code + the official test suite in the microVM
+# ----------------------------------------------------------------------
+
+
+def _extract_code(completion: str) -> str:
+    """Pull code out of a ```python fenced block; fall back to raw text."""
+    match = re.search(r"```(?:python)?\s*\n(.*?)```", completion, re.DOTALL)
+    return match.group(1) if match else completion
+
+
+@scorer(metrics=[accuracy(), stderr()])
+def microvm_test_scorer() -> Scorer:
+    async def score(state: TaskState, target: Target) -> Score:
+        completion = _extract_code(state.output.completion)
+        test_code = state.metadata["test"]
+        entry_point = state.metadata["entry_point"]
+
+        program = "\n\n".join([completion, test_code, f"check({entry_point})"])
+
+        await sandbox().write_file("test_solution.py", program)
+        result: ExecResult[str] = await sandbox().exec(
+            ["python3", "test_solution.py"], timeout=30
         )
-        prompt = f"{sysmsg}\n{item.prompt}"
-        completion = await client.complete(prompt)
-        submission = "\n\n".join(
-            [
-                item.prompt.rstrip(),
-                completion.rstrip(),
-                item.test.rstrip(),
-                f"check({item.entry_point})",
-            ]
+
+        return Score(
+            value="C" if result.success else "I",
+            answer=completion,
+            explanation="all tests passed" if result.success else result.stderr,
         )
-        result = await runner.run(submission, [])  # 2nd param is extra modules...
-        return {
-            **item.model_dump(),
-            "prompt_full": prompt,
-            "completion": completion,
-            "submission": submission,
-            "result": result
-        }
+
+    return score
 
 
-async def he_solve_tasks(stream: Iterable[HumanEvalData],
-                         client: LLMClient,
-                         runner: Runner[dict],
-                         max_coros=4):
-    sem = asyncio.Semaphore(max_coros) if max_coros>1 else None
-    # NOTE: there must be a way to stream the result of this as well...
-    tasks = [he_solve_task(item, client, runner, sem) for item in stream]
-    results = await asyncio.gather(*tasks)  # TODO: semaphore
-    return results
+# ----------------------------------------------------------------------
+# task
+# ----------------------------------------------------------------------
 
 
-# TODO: will run in example for now, we still have to build the factories, some helpers etc...
-def run(): pass
+@task
+def humaneval_microvm(limit: int | None = 5) -> Task:
+    """HumanEval, scored inside microsandbox microVMs.
 
-
-__all__ = [
-    "HumanEvalData",
-    "he_load_tasks",
-    "he_solve_task",
-    "he_solve_tasks",
-]
+    Args:
+        limit: Number of problems to include (None for the full 164).
+               Note: `inspect eval ... --limit N` also works and composes
+               with this -- whichever is smaller wins.
+    """
+    return Task(
+        dataset=humaneval_dataset(limit=limit),
+        solver=[generate()],
+        scorer=microvm_test_scorer(),
+        sandbox="microsandbox",
+    )

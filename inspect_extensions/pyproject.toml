@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inspect_extensions"
+version = "0.0.1"
+description = "Custom hooks and sandboxes for inspect AI"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx",
+    "pydantic",
+    "inspect-ai==0.3.244",
+    "microsandbox==0.6.4",
+]
+
+[project.entry-points.inspect_ai]
+my_extensions = "inspect_extensions"
+
+[tool.setuptools.packages.find]
+where = ["src"]
