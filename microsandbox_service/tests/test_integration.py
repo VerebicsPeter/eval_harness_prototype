@@ -27,7 +27,7 @@ def test_real_microvm_round_trip() -> None:
     settings = Settings(api_key=None, default_image="python")
     app = create_app(settings=settings)
     with TestClient(app) as client:
-        sandbox_id = client.post("/sandboxes", json={"image": "python"}).json()["id"]
+        sandbox_id = client.post("/sandboxes", json={"image": "python"}).json()["name"]
         try:
             resp = client.post(
                 f"/sandboxes/{sandbox_id}/exec",

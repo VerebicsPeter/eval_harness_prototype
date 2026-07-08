@@ -1,13 +1,16 @@
 """HTTP endpoints mapping onto the microsandbox SDK.
 
 The heavy SDK calls used here mirror those already exercised by the Inspect
-sandbox integration: ``Sandbox.create`` / ``sandbox.exec`` / ``sandbox.fs.write``
-/ ``sandbox.fs.read`` / ``sandbox.stop``.
+sandbox integration: 
+``Sandbox.create``
+``sandbox.exec`` 
+``sandbox.fs.write``
+``sandbox.fs.read``
+``sandbox.stop``.
 """
 
 from __future__ import annotations
 
-import base64
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -16,23 +19,23 @@ from microsandbox_service.auth import require_auth
 from microsandbox_service.models import (
     CreateSandboxRequest,
     ExecRequest,
+    ShellRequest,
     ExecResponse,
-    FileEncoding,
     HealthResponse,
     ReadFileRequest,
     ReadFileResponse,
-    SandboxInfo,
     WriteFileRequest,
     WriteFileResponse,
 )
 from microsandbox_service.registry import (
-    SandboxEntry,
     SandboxLimitError,
+    SandboxEntry,
     SandboxRegistry,
+    get_sandbox_lock,
+    to_entry,
 )
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter()
 
 
@@ -40,42 +43,26 @@ def get_registry(request: Request) -> SandboxRegistry:
     return request.app.state.registry
 
 
-def _to_info(entry: SandboxEntry) -> SandboxInfo:
-    return SandboxInfo(
-        id=entry.id,
-        name=entry.name,
-        image=entry.image,
-        cpus=entry.cpus,
-        memory=entry.memory,
-        created_at=entry.created_at,
-        last_used=entry.last_used,
-    )
-
-
-def _require_entry(registry: SandboxRegistry, sandbox_id: str) -> SandboxEntry:
+async def _require_entry(registry: SandboxRegistry, name: str) -> SandboxEntry:
     try:
-        return registry.get(sandbox_id)
-    except KeyError:
+        handle = await registry.get(name)
+        return to_entry(handle)
+    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"sandbox '{sandbox_id}' not found",
-        )
-
-
-# ---------- health (no auth) ----------
+            detail=f"sandbox '{name}' execution failed: {e}",
+        ) from e
 
 
 @router.get("/health", response_model=HealthResponse, tags=["health"])
 async def health(registry: SandboxRegistry = Depends(get_registry)) -> HealthResponse:
-    return HealthResponse(sandbox_count=registry.count())
-
-
-# ---------- sandbox lifecycle ----------
+    sandbox_count = await registry.count_own()
+    return HealthResponse(sandbox_count=sandbox_count)
 
 
 @router.post(
     "/sandboxes",
-    response_model=SandboxInfo,
+    response_model=SandboxEntry,
     status_code=status.HTTP_201_CREATED,
     tags=["sandboxes"],
     dependencies=[Depends(require_auth)],
@@ -83,9 +70,9 @@ async def health(registry: SandboxRegistry = Depends(get_registry)) -> HealthRes
 async def create_sandbox(
     body: CreateSandboxRequest,
     registry: SandboxRegistry = Depends(get_registry),
-) -> SandboxInfo:
+) -> SandboxEntry:
     try:
-        entry = await registry.create(
+        handle = await registry.create(
             image=body.image,
             cpus=body.cpus,
             memory=body.memory,
@@ -96,32 +83,33 @@ async def create_sandbox(
     except Exception as exc:  # noqa: BLE001 - surface SDK failures as 502
         logger.exception("failed to create sandbox")
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"failed to create sandbox: {exc}")
-    return _to_info(entry)
+    return to_entry(handle)
 
 
 @router.get(
     "/sandboxes",
-    response_model=list[SandboxInfo],
+    response_model=list[SandboxEntry],
     tags=["sandboxes"],
     dependencies=[Depends(require_auth)],
 )
 async def list_sandboxes(
     registry: SandboxRegistry = Depends(get_registry),
-) -> list[SandboxInfo]:
-    return [_to_info(entry) for entry in registry.list()]
+) -> list[SandboxEntry]:
+    return [to_entry(handle) for handle in await registry.list_own()]
 
 
 @router.get(
     "/sandboxes/{sandbox_id}",
-    response_model=SandboxInfo,
+    response_model=SandboxEntry,
     tags=["sandboxes"],
     dependencies=[Depends(require_auth)],
 )
 async def get_sandbox(
     sandbox_id: str,
     registry: SandboxRegistry = Depends(get_registry),
-) -> SandboxInfo:
-    return _to_info(_require_entry(registry, sandbox_id))
+) -> SandboxEntry:
+    handle = await registry.get(sandbox_id)
+    return to_entry(handle)
 
 
 @router.delete(
@@ -144,9 +132,6 @@ async def delete_sandbox(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-# ---------- execution ----------
-
-
 @router.post(
     "/sandboxes/{sandbox_id}/exec",
     response_model=ExecResponse,
@@ -158,10 +143,12 @@ async def exec_command(
     body: ExecRequest,
     registry: SandboxRegistry = Depends(get_registry),
 ) -> ExecResponse:
-    entry = _require_entry(registry, sandbox_id)
-    async with entry.lock:
+    entry = await _require_entry(registry, sandbox_id)
+    async with await get_sandbox_lock(entry.name):
         try:
-            result = await entry.sandbox.exec(
+            hd = await registry.get(sandbox_id)
+            sb = await hd.connect()
+            result = await sb.exec(
                 body.cmd[0],
                 body.cmd[1:],
                 cwd=body.cwd,
@@ -179,8 +166,37 @@ async def exec_command(
     )
 
 
-# ---------- file I/O ----------
-
+@router.post(
+    "/sandboxes/{sandbox_id}/shell",
+    response_model=ExecResponse,
+    tags=["exec"],
+    dependencies=[Depends(require_auth)],
+)
+async def shell_command(
+    sandbox_id: str,
+    body: ShellRequest,
+    registry: SandboxRegistry = Depends(get_registry),
+) -> ExecResponse:
+    entry = await _require_entry(registry, sandbox_id)
+    async with await get_sandbox_lock(entry.name):
+        try:
+            hd = await registry.get(sandbox_id)
+            sb = await hd.connect()
+            result = await sb.shell(
+                body.script,
+                cwd=body.cwd,
+                env=body.env,
+                timeout=float(body.timeout) if body.timeout else None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("exec failed in sandbox %s", sandbox_id)
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"exec failed: {exc}")
+    return ExecResponse(
+        success=result.exit_code == 0,
+        returncode=result.exit_code,
+        stdout=result.stdout_text,
+        stderr=result.stderr_text,
+    )
 
 @router.post(
     "/sandboxes/{sandbox_id}/files/write",
@@ -193,20 +209,18 @@ async def write_file(
     body: WriteFileRequest,
     registry: SandboxRegistry = Depends(get_registry),
 ) -> WriteFileResponse:
-    entry = _require_entry(registry, sandbox_id)
+    entry = await _require_entry(registry, sandbox_id)
 
-    if body.encoding is FileEncoding.base64:
+    async with await get_sandbox_lock(entry.name):
         try:
-            # binascii.Error (raised on malformed input) subclasses ValueError.
-            data = base64.b64decode(body.content, validate=True)
+            data = body.content.encode(body.encoding)
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"invalid base64 content: {exc}")
-    else:
-        data = body.content.encode("utf-8")
-
-    async with entry.lock:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"invalid content: {exc}")        
+        
         try:
-            await entry.sandbox.fs.write(body.path, data)
+            hd = await registry.get(sandbox_id)
+            sb = await hd.connect()
+            await sb.fs.write(body.path, data)
         except Exception as exc:  # noqa: BLE001
             logger.exception("write_file failed in sandbox %s", sandbox_id)
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"write failed: {exc}")
@@ -225,30 +239,20 @@ async def read_file(
     body: ReadFileRequest,
     registry: SandboxRegistry = Depends(get_registry),
 ) -> ReadFileResponse:
-    entry = _require_entry(registry, sandbox_id)
+    entry = await _require_entry(registry, sandbox_id)
 
-    async with entry.lock:
+    async with await get_sandbox_lock(entry.name):
         try:
-            data = await entry.sandbox.fs.read(body.path)
+            hd = await registry.get(sandbox_id)
+            sb = await hd.connect()
+            data = await sb.fs.read(body.path)
         except Exception as exc:  # noqa: BLE001
             logger.exception("read_file failed in sandbox %s", sandbox_id)
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"read failed: {exc}")
 
-    # The SDK returns bytes; some builds may return str for text reads.
-    if isinstance(data, str):
-        raw = data.encode("utf-8")
-    else:
-        raw = data
-
-    if body.encoding is FileEncoding.base64:
-        content = base64.b64encode(raw).decode("ascii")
-    else:
         try:
-            content = raw.decode("utf-8")
+            content = data.decode(body.encoding)
         except UnicodeDecodeError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"file is not valid UTF-8; request encoding='base64' instead ({exc})",
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"decoding error: {exc}")
 
-    return ReadFileResponse(path=body.path, content=content, encoding=body.encoding)
+    return ReadFileResponse(path=body.path, content=content)

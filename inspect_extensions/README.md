@@ -23,7 +23,7 @@ uv pip install inspect_extensions
 Run the smoke test script to verify microsandbox is working:
 
 ```bash
-python -m tests.test_microsandbox
+python inspect_extensions/tests/test_integration.py
 ```
 
 > NOTE: Running the tests the first time may take longer because of microsandbox initialization. Also the script will download the `python` image the first time.

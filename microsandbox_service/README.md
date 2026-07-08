@@ -70,32 +70,26 @@ File contents are transferred as `encoding: "utf-8"` (plain string) or
 
 ### Example
 
-```bash
-BASE=http://127.0.0.1:8000
-# If MSB_SERVICE_API_KEY is set, add: -H "Authorization: Bearer $MSB_SERVICE_API_KEY"
+Create a VM using:
 
-# create a sandbox
-ID=$(curl -s -X POST $BASE/sandboxes \
-  -H 'Content-Type: application/json' \
-  -d '{"image":"python","cpus":1,"memory":512}' | jq -r .id)
+```json
+POST /sandboxes
+{
+  "image": "python",
+  "cpus": 1,
+  "memory": 256,
+  "name": "bar"
+}
+```
 
-# run a command
-curl -s -X POST $BASE/sandboxes/$ID/exec \
-  -H 'Content-Type: application/json' \
-  -d '{"cmd":["python3","-c","print(1+1)"]}'
-# -> {"success":true,"returncode":0,"stdout":"2\n","stderr":""}
+Run a script in the VM using:
 
-# write then read a file
-curl -s -X POST $BASE/sandboxes/$ID/files/write \
-  -H 'Content-Type: application/json' \
-  -d '{"path":"/tmp/msg.txt","content":"hello\n"}'
-
-curl -s -X POST $BASE/sandboxes/$ID/files/read \
-  -H 'Content-Type: application/json' \
-  -d '{"path":"/tmp/msg.txt"}'
-
-# destroy it
-curl -s -X DELETE $BASE/sandboxes/$ID
+```json
+POST /sandboxes/{sandbox_id}/exec
+{
+  "cmd": ["python", "-c", "print('Hi from microVM!')"],
+  "timeout": 30
+}
 ```
 
 ## Tests

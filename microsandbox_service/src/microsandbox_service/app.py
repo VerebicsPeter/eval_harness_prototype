@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 def create_app(
     settings: Settings | None = None,
-    sandbox_factory: SandboxFactory | None = None,
 ) -> FastAPI:
     """Build the FastAPI app.
 
@@ -29,7 +28,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        registry = SandboxRegistry(settings, sandbox_factory=sandbox_factory)
+        registry = SandboxRegistry(settings, namespace="fast-api")
         app.state.settings = settings
         app.state.registry = registry
 
@@ -39,12 +38,11 @@ def create_app(
                 "Set it before exposing this service on a network."
             )
 
-        registry.start_reaper()
         try:
             yield
         finally:
-            await registry.stop_reaper()
-            await registry.remove_all()
+            await registry.remove_own()
+            
 
     app = FastAPI(
         title="microsandbox service",

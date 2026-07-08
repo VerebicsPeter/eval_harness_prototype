@@ -17,6 +17,7 @@ def main() -> None:
     )
     settings = get_settings()
     app = create_app(settings)
+    print("hey!", settings.host)
     # Single worker only: the sandbox registry lives in-process, so multiple
     # workers would each hold a disjoint set of sandboxes.
     uvicorn.run(app, host=settings.host, port=settings.port, workers=1)

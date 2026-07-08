@@ -29,9 +29,9 @@ class Settings(BaseSettings):
     default_memory: int = 512  # MiB
 
     # lifecycle management
-    idle_ttl_seconds: float = 600.0  # 10m
     max_sandboxes: int = 50
-    reaper_interval_seconds: float = 60.0  # 1m
+    idle_ttl_seconds: float = 600.0  # 10m
+    # TODO: gc
 
 
 @lru_cache
